@@ -16,3 +16,9 @@ docs_readthedocs/
 #
 runs/
 exampleLoihi/02_NMNSIT/NMNSITsmall/
+
+#
+venv/
+example/*.png
+example/wandb/
+

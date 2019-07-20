@@ -1,0 +1,43 @@
+simulation:
+    desc: "Ts: sample time, tSample: length of spike trains, nSample: no idea"
+    value:
+        Ts: 1.0
+        tSample: 100
+        nSample: 12
+neuron:
+    desc: "type: neuron type, theta: threshold, tauSr: no idea, tauRef: no idea, scaleRef: no idea, tauRho: no idea, scaleRho: no idea"
+    value:
+        type:     SRMALPHA
+        theta:    10
+        tauSr:    10.0
+        tauRef:   1.0
+        scaleRef: 2     # relative to theta
+        tauRho:   1     # relative to theta #0.43429448190325176
+        scaleRho: 1
+placeCells:
+    desc: "maxRate: max firing rate, N: # of place cells per state dimension, stateBounds: bounds per state dimension"
+    value:
+        maxRate: 100.0
+        N: [5, 5, 5, 5]
+        stateBounds: [[-4.8, 4.8], [-10.0, 10.0], [-24.0, 24.0], [-900.0, 900.0]]
+training:
+    desc: "episodes: episodes, batchSize: learning batch size, gamma: reward discount, epsStart: epsilon-greedy start value, epsEnd: epsilon-greedy end value, epsDecay: epsilon-greedy decay time constant, targetUpdate: episodes between target network udpates, learning rate: learning rate"
+    value:
+        episodes: 500
+        batchSize: 128
+        gamma: 0.999
+        epsStart: 0.9
+        epsEnd: 0.05
+        epsDecay: 200
+        targetUpdate: 10
+        learningRate: 0.01
+environment:
+    desc: "name: environment name, render: whether to render environment"
+    value:
+        name: CartPole-v0
+        render: False
+network:
+    desc: "hiddenSize: size of hidden layer, memorySize: size of memory for experience learning"
+    value:
+        hiddenSize: 512
+        memorySize: 10000
