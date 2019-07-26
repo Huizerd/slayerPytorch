@@ -1,6 +1,5 @@
 # SLAYER
 import sys, os
-from datetime import datetime
 
 CURRENT_TEST_DIR = os.getcwd()
 sys.path.append(CURRENT_TEST_DIR + "/../src")
@@ -12,7 +11,6 @@ import gym
 import math
 import random
 import pdb
-import numpy as np
 import pandas as pd
 from collections import deque, namedtuple
 from itertools import count
