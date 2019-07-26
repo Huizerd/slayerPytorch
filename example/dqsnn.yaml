@@ -7,19 +7,19 @@ simulation:
 neuron:
     desc: "type: neuron type, theta: threshold, tauSr: no idea, tauRef: no idea, scaleRef: no idea, tauRho: no idea, scaleRho: no idea"
     value:
-        type:     SRMALPHA
-        theta:    10
-        tauSr:    10.0
-        tauRef:   1.0
+        type: SRMALPHA
+        theta: 10
+        tauSr: 10.0
+        tauRef: 1.0
         scaleRef: 2     # relative to theta
-        tauRho:   1     # relative to theta #0.43429448190325176
+        tauRho: 1     # relative to theta #0.43429448190325176
         scaleRho: 1
 placeCells:
     desc: "maxRate: max firing rate, N: # of place cells per state dimension, stateBounds: bounds per state dimension"
     value:
         maxRate: 100.0
         N: [5, 5, 5, 5]
-        stateBounds: [[-4.8, 4.8], [-10.0, 10.0], [-24.0, 24.0], [-900.0, 900.0]]
+        stateBounds: [[-4.8, 4.8], [-10.0, 10.0], [-12.0, 12.0], [-400.0, 400.0]]
 training:
     desc: "episodes: episodes, batchSize: learning batch size, gamma: reward discount, epsStart: epsilon-greedy start value, epsEnd: epsilon-greedy end value, epsDecay: epsilon-greedy decay time constant, targetUpdate: episodes between target network udpates, learning rate: learning rate"
     value:
@@ -27,10 +27,10 @@ training:
         batchSize: 128
         gamma: 0.999
         epsStart: 0.9
-        epsEnd: 0.05
-        epsDecay: 200
+        epsEnd: 0.01
+        epsDecay: 500
         targetUpdate: 10
-        learningRate: 0.01
+        learningRate: 0.001
 environment:
     desc: "name: environment name, render: whether to render environment"
     value:

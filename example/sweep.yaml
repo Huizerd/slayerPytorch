@@ -1,0 +1,32 @@
+description: TryOut
+program: vertical.py
+method: bayes
+metric:
+    name: RewardSmooth
+    goal: maximize
+early_terminate:
+    type: hyperband
+
+parameters:
+    config:
+        values: [vertical_div.yaml]
+    network:
+        hiddenSize:
+            values: [32, 128, 512]
+    training:
+        targetUpdate:
+            min: 5
+            max: 50
+        epsDecay:
+            min: 100
+            max: 20000
+        batchSize:
+            values: [32, 128, 256]
+    placeCells:
+        process:
+            values: [transform, clamp, nothing]
+        stateBounds:
+            values: [[[-0.5, 0.5]], [[-2.0, 2.0]], [[-10.0, 10.0]]]
+    simulation:
+        tSample:
+            values: [100, 500]
