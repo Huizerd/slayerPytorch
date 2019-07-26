@@ -1,11 +1,3 @@
-# SLAYER
-import os
-import sys
-
-CURRENT_TEST_DIR = os.getcwd()
-sys.path.append(CURRENT_TEST_DIR + "/../src")
-import slayerSNN as snn
-
 # Other
 import gym
 import gym_mav
@@ -59,115 +51,32 @@ class ReplayMemory(object):
 
 # Spiking network to be used
 class Network(nn.Module):
-    def __init__(self, config, inputs, outputs):
+    def __init__(self, inputs, hidden, outputs):
         super(Network, self).__init__()
 
-        # Initialize SLAYER
-        slayer = snn.layer(config["neuron"], config["simulation"])
-        self.slayer = slayer
-
         # Define network layers
-        self.fc1 = slayer.dense(inputs, config["network"]["hiddenSize"])
-        self.fc2 = slayer.dense(config["network"]["hiddenSize"], outputs)
-
-    def forward(self, spike_input):
-        spike_layer1 = self.slayer.spike(self.slayer.psp(self.fc1(spike_input)))
-        spike_layer2 = self.slayer.spike(self.slayer.psp(self.fc2(spike_layer1)))
-
-        return spike_layer2
+        self.fc1 = nn.Linear(inputs, hidden)
+        self.fc2 = nn.Linear(hidden, outputs)
 
 
-# With this, states closer to zero vary more, which means they excite more different cells
-# Potentially making them better to differentiate
-# Another way: vary place cell centers with sigmoid (closer together in center) and make them thinner
-def sigmoid(
-    x: torch.Tensor,
-    y_min: torch.Tensor,
-    y_step: torch.Tensor,
-    x_mid: torch.Tensor,
-    steepness: torch.Tensor,
-) -> torch.Tensor:
-    y = torch.where(
-        x >= 0,
-        y_step / (1 + torch.exp(-steepness * (x - x_mid))) + y_min,
-        (y_step * torch.exp(steepness * x)) / (1 + torch.exp(steepness * (x - x_mid)))
-        + y_min,
-    )
-    return y
+    def forward(self, x):
+        # Batch norm after ReLU
+        # See https://github.com/keras-team/keras/issues/1802#issuecomment-187966878
+        # No batch norm after all, more stable like this
+        x = F.relu(self.fc1(x))
+
+        # Linear activation (as in DQN) since we're approximating real-valued Q-values
+        return self.fc2(x)
 
 
-# Use place cells for encoding state
-def place_cell_centers(state_bounds, n):
-    centers = [
-        torch.linspace(*b, c, device=DEVICE, dtype=torch.float)
-        for b, c in zip(state_bounds, n)
-    ]
-    width = torch.tensor(
-        [c[1] - c[0] for c in centers], device=DEVICE, dtype=torch.float
-    )
-    return torch.functional.cartesian_prod(*centers), width
-
-
-def place_cells(state, centers, width, max_rate):
-    if centers.dim() == 1:
-        distance = (centers[..., None] - state) ** 2
-    else:
-        distance = (centers - state) ** 2
-    firing_rate = max_rate * torch.exp(-(distance / (2.0 * width ** 2)).sum(1))
-    return firing_rate
-
-
-# Encoding state as spike trains
-def encode(
-    state, centers, width, state_bounds, max_rate, steepness, time, sample_time, process
-):
-    # Note that quite long trains are needed to get something remotely deterministic
-    steps = int(time / sample_time)
-    low = torch.tensor([b[0] for b in state_bounds], device=DEVICE, dtype=torch.float)
-    mid = torch.tensor(
-        [sum(b) / 2 for b in state_bounds], device=DEVICE, dtype=torch.float
-    )
-    high = torch.tensor([b[1] for b in state_bounds], device=DEVICE, dtype=torch.float)
-
-    # Clamp only in case we don't do a transform
-    if process == "transform":
-        state_prep = sigmoid(
-            state, y_min=low, y_step=(high - low), x_mid=mid, steepness=steepness / high
-        )
-    elif process == "clamp":
-        state_prep = torch.tensor(
-            [s.clamp(*sb) for s, sb in zip(state, state_bounds)],
-            device=DEVICE,
-            dtype=torch.float,
-        )
-    elif process == "nothing":
-        state_prep = state.clone().detach()
-    else:
-        raise ValueError("Provide a valid choice: transform, clamp, nothing.")
-
-    firing_rate = (
-        place_cells(state_prep, centers, width, max_rate).repeat(steps, 1).permute(1, 0)
-    )
-    spikes = torch.rand(*firing_rate.size(), device=DEVICE) < firing_rate * (
-        sample_time / 1000.0
-    )
-    return spikes.view(1, -1, 1, 1, time).float(), firing_rate.view(1, -1, 1, 1, time)
-
-
-# Decode spikes into Q-values
-def decode(q_values_enc):
-    return q_values_enc.sum(-1).view(q_values_enc.size(0), -1)
-
-
-# Decode output spikes into values/actions
-def select_action(q_values_enc, steps_done, eps_start, eps_end, eps_decay):
+def select_action(q_values, steps_done, eps_start, eps_end, eps_decay):
     sample = random.random()
     eps_threshold = eps_end + (eps_start - eps_end) * math.exp(
         -1.0 * steps_done / eps_decay
     )
 
     if sample > eps_threshold:
-        return decode(q_values_enc).max(1)[1].view(1, 1), eps_threshold
+        return q_values.max(1)[1].view(1, 1), eps_threshold
     else:
         return (
             torch.tensor(
@@ -199,25 +108,16 @@ def optimize_model(batch_size, gamma):
     action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
 
-    # No need for encoding here (I think)
-    # Makes more sense to store states as spike trains
-    # Are actions also spikes?
-    # Or does that matter less since decoding is deterministic?
-    # No, actions are actions --> Q-values are spikes
-
     # Compute Q-values: select action based on maximum
     # Action which would have been taken based on policy net
     # But Q-learning is off-policy, so we don't actually take it
-    q_values_enc = policy_net(state_batch)
-    q_values = decode(q_values_enc).gather(1, action_batch)
+    q_values = policy_net(state_batch).gather(1, action_batch)
 
     # Compute expected values for next states
     # Based on older target net
     # Zero in case of terminal state
     next_values = torch.zeros(batch_size, device=DEVICE)
-    next_values[non_terminal_mask] = (
-        decode(target_net(non_terminal_next_states)).max(1)[0].detach()
-    )
+    next_values[non_terminal_mask] = target_net(non_terminal_next_states).max(1)[0].detach()
 
     # Compute expected Q-values
     expected_q_values = (next_values * gamma) + reward_batch
@@ -230,7 +130,7 @@ def optimize_model(batch_size, gamma):
 
     # Optimize model
     optimizer.zero_grad()
-    loss.backward()  # TODO: try with other loss from SLAYER
+    loss.backward()
     for param in policy_net.parameters():
         # Clamp to improve stability
         # See https://stackoverflow.com/questions/36462962/loss-clipping-in-tensor-flow-on-deepminds-dqn
@@ -288,7 +188,7 @@ if __name__ == "__main__":
         "-c",
         "--config",
         type=str,
-        default="vertical_div.yaml",
+        default="vertical_nn.yaml",
         help="Select configuration file",
     )
     args = vars(parser.parse_args())
@@ -296,12 +196,6 @@ if __name__ == "__main__":
     # Config
     config = Config(config_paths=[args["config"]])
     wandb.init(config=config, project="vertical")
-
-    # Place cells
-    centers, width = place_cell_centers(
-        config["placeCells"]["stateBounds"], config["placeCells"]["N"]
-    )
-    n_place_cells = centers.size(0)
 
     # Environment
     env = gym.make(
@@ -321,10 +215,11 @@ if __name__ == "__main__":
     env.seed(0)
     actions = config["environment"]["actions"]
     n_actions = len(actions)
+    n_states = 2 if env.state_obs == "altitude" else 1
 
-    # SNN
-    policy_net = Network(config, n_place_cells, n_actions).to(DEVICE)
-    target_net = Network(config, n_place_cells, n_actions).to(DEVICE)
+    # NN
+    policy_net = Network(n_states, config["network"]["hiddenSize"], n_actions).to(DEVICE)
+    target_net = Network(n_states, config["network"]["hiddenSize"], n_actions).to(DEVICE)
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()
 
@@ -343,20 +238,8 @@ if __name__ == "__main__":
 
     for i_episode in range(config["training"]["episodes"]):
         # Initialize the environment and state
-        state = env.reset().float().to(DEVICE)
-
-        # Encode state
-        state_enc, _ = encode(
-            state,
-            centers,
-            width,
-            config["placeCells"]["stateBounds"],
-            config["placeCells"]["maxRate"],
-            config["placeCells"]["steepness"],
-            config["simulation"]["tSample"],
-            config["simulation"]["Ts"],
-            config["placeCells"]["process"],
-        )
+        # BCHW is torch order, but we only do BC
+        state = env.reset().float().to(DEVICE).view(1, -1)
 
         accumulated_reward = 0.0
         max_div = (-2 * env.state[1] / env.state[0]).item()
@@ -375,11 +258,11 @@ if __name__ == "__main__":
             # Feed encoded state through network
             # no_grad() here or in select_action: doesn't matter
             with torch.no_grad():
-                q_values_enc = policy_net(state_enc)
+                q_values = policy_net(state)
 
             # Select and perform an action
             action, eps = select_action(
-                q_values_enc,
+                q_values,
                 steps_done,
                 config["training"]["epsStart"],
                 config["training"]["epsEnd"],
@@ -394,33 +277,21 @@ if __name__ == "__main__":
             if abs(divergence) > abs(max_div):
                 max_div = divergence
             for i in range(n_actions):
-                value_map[i].append((divergence, decode(q_values_enc)[0, i].item()))
+                value_map[i].append((divergence, q_values[0, i].item()))
             policy_map.append((divergence, action.item()))
             altitude_map.append(env.state[0].item())
 
             # Set to None if next state is terminal
             if not done:
-                next_state = next_state.float().to(DEVICE)
-                next_state_enc, _ = encode(
-                    next_state,
-                    centers,
-                    width,
-                    config["placeCells"]["stateBounds"],
-                    config["placeCells"]["maxRate"],
-                    config["placeCells"]["steepness"],
-                    config["simulation"]["tSample"],
-                    config["simulation"]["Ts"],
-                    config["placeCells"]["process"],
-                )
+                next_state = next_state.float().to(DEVICE).view(1, -1)
             else:
-                next_state_enc = None
+                next_state = None
 
             # Store the transition in memory
-            memory.push(state_enc, action, next_state_enc, reward)
+            memory.push(state, action, next_state, reward)
 
             # Move to the next state
             state = next_state
-            state_enc = next_state_enc
 
             # Perform one step of the optimization (on the target network)
             optimize_model(config["training"]["batchSize"], config["training"]["gamma"])

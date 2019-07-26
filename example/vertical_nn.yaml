@@ -1,32 +1,8 @@
-simulation:
-    desc: "Ts: sample time, tSample: length of spike trains, nSample: sample batch size"
-    value:
-        Ts: 1.0
-        tSample: 500
-        # nSample: 12  doesn't work!
-neuron:
-    desc: "type: neuron type, theta: threshold, tauSr: potential kernel time constant, tauRef: refractory kernel time constant, scaleRef: refractory kernel scaling, relative to theta, tauRho: spike fn derivative time constant, relative to theta, scaleRho: spike fn derivative scaling"
-    value:
-        # scaleRef: 2  # relative to theta, but doesn't work
-        scaleRho: 1
-        tauRef: 1.0
-        tauRho: 1  # relative to theta
-        tauSr: 10.0
-        theta: 10
-        # type: SRMALPHA
-placeCells:
-    desc: "maxRate: max firing rate, N: # of place cells per state dimension, stateBounds: bounds per state dimension"
-    value:
-        N: [41]
-        maxRate: 400.0
-        process: transform  # transform, clamp or nothing
-        stateBounds: [[-10.0, 10.0]]
-        steepness: 10.0
 training:
     desc: "episodes: episodes, batchSize: learning batch size, gamma: reward discount, epsStart: epsilon-greedy start value, epsEnd: epsilon-greedy end value, epsDecay: epsilon-greedy decay time constant, targetUpdate: episodes between target network updates, learning rate: learning rate"
     value:
         batchSize: 128
-        episodes: 100
+        episodes: 500
         epsDecay: 10000
         epsEnd: 0.01
         epsStart: 0.9

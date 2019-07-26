@@ -43,16 +43,9 @@ Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"
 # Replay batches of transitions in memory for optimization
 class ReplayMemory(object):
     def __init__(self, capacity: int) -> None:
-        # self.capacity = capacity
-        # self.memory = []
-        # self.position = 0
         self.memory = deque(maxlen=capacity)
 
     def push(self, *args) -> None:
-        # if len(self.memory) < self.capacity:
-        #     self.memory.append(None)
-        # self.memory[self.position] = Transition(*args)
-        # self.position = (self.position + 1) % self.capacity
         self.memory.append(Transition(*args))
 
     def sample(self, batch_size: int) -> list:
@@ -170,8 +163,7 @@ def select_action(q_values_enc, steps_done, eps_start, eps_end, eps_decay):
     )
 
     if sample > eps_threshold:
-        with torch.no_grad():
-            return decode(q_values_enc).max(1)[1].view(1, 1), eps_threshold
+        return decode(q_values_enc).max(1)[1].view(1, 1), eps_threshold
     else:
         return (
             torch.tensor(
@@ -317,6 +309,7 @@ if __name__ == "__main__":
 
     # Environment
     env = gym.make(config["environment"]["name"])
+    env.seed(0)
     n_actions = env.action_space.n
 
     # SNN
@@ -370,7 +363,9 @@ if __name__ == "__main__":
                 env.render()
 
             # Feed encoded state through network
-            q_values_enc = policy_net(state_enc)
+            # no_grad() here or in select_action: doesn't matter
+            with torch.no_grad():
+                q_values_enc = policy_net(state_enc)
 
             # Select and perform an action
             action, eps = select_action(
