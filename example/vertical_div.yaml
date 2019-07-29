@@ -51,6 +51,7 @@ environment:
         rewardMods: [1.0, 15.0, 1.0, 1.0]
         stateObs: divergence
         steps: 200
+        timedReward: False
 network:
     desc: "hiddenSize: size of hidden layer, memorySize: size of memory for experience learning"
     value:

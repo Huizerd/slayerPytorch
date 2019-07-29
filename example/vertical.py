@@ -67,12 +67,18 @@ class Network(nn.Module):
         self.slayer = slayer
 
         # Define network layers
-        self.fc1 = slayer.dense(inputs, config["network"]["hiddenSize"])
-        self.fc2 = slayer.dense(config["network"]["hiddenSize"], outputs)
+        if config["network"]["hiddenSize"] != 0:
+            self.fc1 = slayer.dense(inputs, config["network"]["hiddenSize"])
+            self.fc2 = slayer.dense(config["network"]["hiddenSize"], outputs)
+        else:
+            self.fc1 = slayer.dense(inputs, outputs)
 
     def forward(self, spike_input):
-        spike_layer1 = self.slayer.spike(self.slayer.psp(self.fc1(spike_input)))
-        spike_layer2 = self.slayer.spike(self.slayer.psp(self.fc2(spike_layer1)))
+        if config["network"]["hiddenSize"] != 0:
+            spike_layer1 = self.slayer.spike(self.slayer.psp(self.fc1(spike_input)))
+            spike_layer2 = self.slayer.spike(self.slayer.psp(self.fc2(spike_layer1)))
+        else:
+            spike_layer2 = self.slayer.spike(self.slayer.psp(self.fc1(spike_input)))
 
         return spike_layer2
 
@@ -143,7 +149,7 @@ def encode(
     elif process == "nothing":
         state_prep = state.clone().detach()
     else:
-        raise ValueError("Provide a valid choice: transform, clamp, nothing.")
+        raise NotImplementedError("Provide a valid choice: transform, clamp, nothing.")
 
     firing_rate = (
         place_cells(state_prep, centers, width, max_rate).repeat(steps, 1).permute(1, 0)
@@ -317,6 +323,7 @@ if __name__ == "__main__":
         state_obs=config["environment"]["stateObs"],
         action_bounds=config["environment"]["actionBounds"],
         gravity=config["environment"]["gravity"],
+        timed_reward=config["environment"]["timedReward"],
     )
     env.seed(0)
     actions = config["environment"]["actions"]

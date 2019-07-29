@@ -139,7 +139,7 @@ def encode(
     elif process == "nothing":
         state_prep = state.clone().detach()
     else:
-        raise ValueError("Provide a valid choice: transform, clamp, nothing.")
+        raise NotImplementedError("Provide a valid choice: transform, clamp, nothing.")
 
     firing_rate = (
         place_cells(state_prep, centers, width, max_rate).repeat(steps, 1).permute(1, 0)

@@ -211,6 +211,7 @@ if __name__ == "__main__":
         state_obs=config["environment"]["stateObs"],
         action_bounds=config["environment"]["actionBounds"],
         gravity=config["environment"]["gravity"],
+        timed_reward=config["environment"]["timedReward"],
     )
     env.seed(0)
     actions = config["environment"]["actions"]
