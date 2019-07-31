@@ -49,7 +49,7 @@ class ReplayMemory(object):
         return len(self.memory)
 
 
-# Spiking network to be used
+# Network to be used
 class Network(nn.Module):
     def __init__(self, inputs, hidden, outputs):
         super(Network, self).__init__()
@@ -116,7 +116,7 @@ def optimize_model(batch_size, gamma):
     # Compute expected values for next states
     # Based on older target net
     # Zero in case of terminal state
-    next_values = torch.zeros(batch_size, device=DEVICE)
+    next_values = torch.zeros(batch_size, device=DEVICE, dtype=torch.float)
     next_values[non_terminal_mask] = target_net(non_terminal_next_states).max(1)[0].detach()
 
     # Compute expected Q-values
@@ -319,6 +319,7 @@ if __name__ == "__main__":
 
         # Update the target network, copying all weights etc.
         if i_episode % config["training"]["targetUpdate"] == 0:
+            # TODO: does load_state_dict() change train mode or other import stuff?
             target_net.load_state_dict(policy_net.state_dict())
 
     # TODO: maybe create proper value map and policy map at end, and save model etc?

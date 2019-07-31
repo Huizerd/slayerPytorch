@@ -210,7 +210,7 @@ def optimize_model(batch_size, gamma):
     # Compute expected values for next states
     # Based on older target net
     # Zero in case of terminal state
-    next_values = torch.zeros(batch_size, device=DEVICE)
+    next_values = torch.zeros(batch_size, device=DEVICE, dtype=torch.float)
     next_values[non_terminal_mask] = (
         decode(target_net(non_terminal_next_states)).max(1)[0].detach()
     )
