@@ -103,14 +103,11 @@ def place_cell_centers(state_bounds, n):
     width = torch.tensor(
         [c[1] - c[0] for c in centers], device=DEVICE, dtype=torch.float
     )
-    return torch.functional.cartesian_prod(*centers), width
+    return torch.functional.cartesian_prod(*centers).view(-1, len(state_bounds)), width
 
 
 def place_cells(state, centers, width, max_rate):
-    if centers.dim() == 1:
-        distance = (centers[..., None] - state) ** 2
-    else:
-        distance = (centers - state) ** 2
+    distance = (centers - state) ** 2
     firing_rate = max_rate * torch.exp(-(distance / (2.0 * width ** 2)).sum(1))
     return firing_rate
 
@@ -124,9 +121,9 @@ def encode(
 
     # Clamp only in case we don't do a transform
     if process == "transform":
-        low = torch.tensor([b[0] for b in state_bounds], device=DEVICE, dtype=torch.float)
-        mid = torch.tensor([sum(b) / 2 for b in state_bounds], device=DEVICE, dtype=torch.float)
-        high = torch.tensor([b[1] for b in state_bounds], device=DEVICE, dtype=torch.float)
+        low = centers[0]
+        high = centers[-1]
+        mid = (high + low) / 2.0
         state_prep = sigmoid(
             state, y_min=low, y_step=(high - low), x_mid=mid, steepness=steepness / high
         )

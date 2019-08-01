@@ -37,6 +37,7 @@ environment:
     desc: "name: environment name, render: whether to render environment"
     value:
         actionBounds: [0.0, 40.0]
+        actionOffset: 0.0
         actions: [0.0, 30.0]
         altBounds: [8.0, 12.0]
         delay: 0

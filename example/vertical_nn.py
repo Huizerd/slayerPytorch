@@ -210,6 +210,7 @@ if __name__ == "__main__":
         goal_obs=config["environment"]["goalObs"],
         state_obs=config["environment"]["stateObs"],
         action_bounds=config["environment"]["actionBounds"],
+        action_offset=config["environment"]["actionOffset"],
         gravity=config["environment"]["gravity"],
         timed_reward=config["environment"]["timedReward"],
     )
