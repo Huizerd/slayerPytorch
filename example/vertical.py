@@ -12,7 +12,6 @@ import gym_mav
 import math
 import random
 import argparse
-import pandas as pd
 import matplotlib.pyplot as plt
 from collections import deque, namedtuple
 from operator import itemgetter
@@ -293,6 +292,17 @@ def make_divergence_map(divergence):
     return fig
 
 
+def make_vertspeed_map(vertspeed):
+    fig, ax = plt.subplots()
+
+    ax.plot(range(len(vertspeed)), vertspeed)
+    ax.set_title("Vertical speed map")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Vertical speed")
+
+    return fig
+
+
 if __name__ == "__main__":
     # Parse for configuration file
     parser = argparse.ArgumentParser(description=None)
@@ -379,6 +389,7 @@ if __name__ == "__main__":
         policy_map = []
         altitude_map = []
         divergence_map = []
+        vertspeed_map = []
 
         for t in count():
             # Render environment
@@ -405,7 +416,8 @@ if __name__ == "__main__":
             accumulated_reward += reward
             reward = torch.tensor([reward], device=DEVICE, dtype=torch.float)
 
-            # Log value, policy and altitude map
+            # Log maps
+            # All state observations without noise (directly from env)
             divergence = (-2 * env.state[1] / env.state[0]).item()
             if abs(divergence) > abs(max_div):
                 max_div = divergence
@@ -414,6 +426,7 @@ if __name__ == "__main__":
             policy_map.append((divergence, action.item()))
             altitude_map.append(env.state[0].item())
             divergence_map.append(divergence)
+            vertspeed_map.append(env.state[1].item())
 
             # Set to None if next state is terminal
             if not done:
@@ -452,7 +465,8 @@ if __name__ == "__main__":
                 wandb.log(
                     {
                         "Reward": accumulated_reward,
-                        "RewardSmooth": sum(accumulated_rewards_smooth) / len(accumulated_rewards_smooth),
+                        "RewardSmooth": sum(accumulated_rewards_smooth)
+                        / len(accumulated_rewards_smooth),
                         "MaxDiv": max_div,
                         "Duration": t + 1,
                         "Epsilon": eps,
@@ -460,6 +474,7 @@ if __name__ == "__main__":
                         "PolicyMap": make_policy_map(policy_map),
                         "AltitudeMap": make_altitude_map(altitude_map),
                         "DivergenceMap": make_divergence_map(divergence_map),
+                        "VertSpeedMap": make_vertspeed_map(vertspeed_map),
                     }
                 )
                 break
