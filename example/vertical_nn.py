@@ -4,10 +4,7 @@ import gym_mav
 import math
 import random
 import argparse
-import pandas as pd
-import matplotlib.pyplot as plt
 from collections import deque, namedtuple
-from operator import itemgetter
 from itertools import count
 
 # Torch
@@ -19,6 +16,9 @@ import torch.nn.functional as F
 # Weights & Biases
 import wandb
 from wandb.wandb_config import Config
+
+# Local
+from vertical import make_altitude_map, make_policy_map, make_value_map, make_divergence_map
 
 # Determinism
 torch.manual_seed(0)
@@ -54,19 +54,28 @@ class Network(nn.Module):
     def __init__(self, inputs, hidden, outputs):
         super(Network, self).__init__()
 
-        # Define network layers
-        self.fc1 = nn.Linear(inputs, hidden)
-        self.fc2 = nn.Linear(hidden, outputs)
+        # One or none hidden layers
+        self.hidden = hidden
 
+        # Define network layers
+        if self.hidden > 0:
+            self.fc1 = nn.Linear(inputs, self.hidden)
+            self.fc2 = nn.Linear(self.hidden, outputs)
+        else:
+            self.fc1 = nn.Linear(inputs, outputs)
 
     def forward(self, x):
         # Batch norm after ReLU
         # See https://github.com/keras-team/keras/issues/1802#issuecomment-187966878
         # No batch norm after all, more stable like this
-        x = F.relu(self.fc1(x))
+        if self.hidden > 0:
+            x = F.relu(self.fc1(x))
+            x = self.fc2(x)
+        else:
+            x = self.fc1(x)
 
         # Linear activation (as in DQN) since we're approximating real-valued Q-values
-        return self.fc2(x)
+        return x
 
 
 def select_action(q_values, steps_done, eps_start, eps_end, eps_decay):
@@ -117,68 +126,26 @@ def optimize_model(batch_size, gamma):
     # Based on older target net
     # Zero in case of terminal state
     next_values = torch.zeros(batch_size, device=DEVICE, dtype=torch.float)
-    next_values[non_terminal_mask] = target_net(non_terminal_next_states).max(1)[0].detach()
+    next_values[non_terminal_mask] = (
+        target_net(non_terminal_next_states).max(1)[0].detach()
+    )
 
     # Compute expected Q-values
     expected_q_values = (next_values * gamma) + reward_batch
 
     # Compute loss
-    # Can be computed before or after decoding of output spikes
-    # We do after now, so we can use Huber loss
-    # Otherwise, use the built-in snn.loss() based on # of spikes
+    # Huber loss here, which is squared for error within [-1, 1], and absolute outside
+    # Might be redundant, since clipping gradients + MSE could achieve the same..
+    # Yes, redundant! See https://openai.com/blog/openai-baselines-dqn/
     loss = F.smooth_l1_loss(q_values, expected_q_values[..., None])
 
     # Optimize model
     optimizer.zero_grad()
     loss.backward()
-    for param in policy_net.parameters():
-        # Clamp to improve stability
-        # See https://stackoverflow.com/questions/36462962/loss-clipping-in-tensor-flow-on-deepminds-dqn
-        # See DQN paper (Mnih et al., 2015)
-        param.grad.data.clamp_(-1, 1)
+    # Clamp gradients to improve stability: deprecated, implemented via Huber loss
+    # See https://stackoverflow.com/questions/36462962/loss-clipping-in-tensor-flow-on-deepminds-dqn
+    # See DQN paper (Mnih et al., 2015)
     optimizer.step()
-
-
-def moving_average(x, window=100):
-    return pd.Series(x).rolling(window=window, min_periods=1).mean().values
-
-
-def make_value_map(state_values):
-    fig, ax = plt.subplots()
-
-    for i, sv in enumerate(state_values):
-        sv.sort(key=itemgetter(0))
-        ax.plot([s[0] for s in sv], [s[1] for s in sv], label=f"Action {i}")
-    ax.set_title("Value map")
-    ax.set_xlabel("Divergence")
-    ax.set_ylabel("Value")
-    ax.legend()
-    ax.grid()
-
-    return fig
-
-
-def make_policy_map(state_actions):
-    state_actions.sort(key=itemgetter(0))
-    fig, ax = plt.subplots()
-
-    ax.plot([s[0] for s in state_actions], [s[1] for s in state_actions])
-    ax.set_title("Policy map")
-    ax.set_xlabel("Divergence")
-    ax.set_ylabel("Action")
-
-    return fig
-
-
-def make_altitude_map(altitude):
-    fig, ax = plt.subplots()
-
-    ax.plot(range(len(altitude)), altitude)
-    ax.set_title("Altitude map")
-    ax.set_xlabel("Step")
-    ax.set_ylabel("Altitude")
-
-    return fig
 
 
 if __name__ == "__main__":
@@ -195,7 +162,7 @@ if __name__ == "__main__":
 
     # Config
     config = Config(config_paths=[args["config"]])
-    wandb.init(config=config, project="vertical")
+    wandb.init(config=config, project="baselines")
 
     # Environment
     env = gym.make(
@@ -220,8 +187,12 @@ if __name__ == "__main__":
     n_states = 2 if env.state_obs == "altitude" else 1
 
     # NN
-    policy_net = Network(n_states, config["network"]["hiddenSize"], n_actions).to(DEVICE)
-    target_net = Network(n_states, config["network"]["hiddenSize"], n_actions).to(DEVICE)
+    policy_net = Network(n_states, config["network"]["hiddenSize"], n_actions).to(
+        DEVICE
+    )
+    target_net = Network(n_states, config["network"]["hiddenSize"], n_actions).to(
+        DEVICE
+    )
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()
 
@@ -237,6 +208,7 @@ if __name__ == "__main__":
     # Tracking vars
     steps_done = 0
     accumulated_rewards = []
+    accumulated_rewards_smooth = deque(maxlen=100)
 
     for i_episode in range(config["training"]["episodes"]):
         # Initialize the environment and state
@@ -248,6 +220,7 @@ if __name__ == "__main__":
         value_map = [[] for _ in range(n_actions)]
         policy_map = []
         altitude_map = []
+        divergence_map = []
 
         for t in count():
             # Render environment
@@ -282,6 +255,7 @@ if __name__ == "__main__":
                 value_map[i].append((divergence, q_values[0, i].item()))
             policy_map.append((divergence, action.item()))
             altitude_map.append(env.state[0].item())
+            divergence_map.append(divergence)
 
             # Set to None if next state is terminal
             if not done:
@@ -304,16 +278,18 @@ if __name__ == "__main__":
             # Episode finished
             if done:
                 accumulated_rewards.append(accumulated_reward)
+                accumulated_rewards_smooth.append(accumulated_reward)
                 wandb.log(
                     {
                         "Reward": accumulated_reward,
-                        "RewardSmooth": moving_average(accumulated_rewards)[-1],
+                        "RewardSmooth": sum(accumulated_rewards_smooth) / len(accumulated_rewards_smooth),
                         "MaxDiv": max_div,
                         "Duration": t + 1,
                         "Epsilon": eps,
                         "ValueMap": make_value_map(value_map),
                         "PolicyMap": make_policy_map(policy_map),
                         "AltitudeMap": make_altitude_map(altitude_map),
+                        "DivergenceMap": make_divergence_map(divergence_map),
                     }
                 )
                 break

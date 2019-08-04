@@ -62,19 +62,22 @@ class Network(nn.Module):
     def __init__(self, config, inputs, outputs):
         super(Network, self).__init__()
 
+        # One or none hidden layers
+        self.hidden = config["network"]["hiddenSize"]
+
         # Initialize SLAYER
         slayer = snn.layer(config["neuron"], config["simulation"])
         self.slayer = slayer
 
         # Define network layers
-        if config["network"]["hiddenSize"] != 0:
-            self.fc1 = slayer.dense(inputs, config["network"]["hiddenSize"])
-            self.fc2 = slayer.dense(config["network"]["hiddenSize"], outputs)
+        if self.hidden > 0:
+            self.fc1 = slayer.dense(inputs, self.hidden)
+            self.fc2 = slayer.dense(self.hidden, outputs)
         else:
             self.fc1 = slayer.dense(inputs, outputs)
 
     def forward(self, spike_input):
-        if config["network"]["hiddenSize"] != 0:
+        if self.hidden > 0:
             spike_layer1 = self.slayer.spike(self.slayer.psp(self.fc1(spike_input)))
             spike_layer2 = self.slayer.spike(self.slayer.psp(self.fc2(spike_layer1)))
         else:
@@ -227,21 +230,18 @@ def optimize_model(batch_size, gamma):
     # Can be computed before or after decoding of output spikes
     # We do after now, so we can use Huber loss
     # Otherwise, use the built-in snn.loss() based on # of spikes
+    # Huber loss here, which is squared for error within [-1, 1], and absolute outside
+    # Might be redundant, since clipping gradients + MSE could achieve the same..
+    # Yes, redundant! See https://openai.com/blog/openai-baselines-dqn/
     loss = F.smooth_l1_loss(q_values, expected_q_values[..., None])
 
     # Optimize model
     optimizer.zero_grad()
     loss.backward()  # TODO: try with other loss from SLAYER
-    for param in policy_net.parameters():
-        # Clamp to improve stability
-        # See https://stackoverflow.com/questions/36462962/loss-clipping-in-tensor-flow-on-deepminds-dqn
-        # See DQN paper (Mnih et al., 2015)
-        param.grad.data.clamp_(-1, 1)
+    # Clamp gradients to improve stability: deprecated, implemented via Huber loss
+    # See https://stackoverflow.com/questions/36462962/loss-clipping-in-tensor-flow-on-deepminds-dqn
+    # See DQN paper (Mnih et al., 2015)
     optimizer.step()
-
-
-def moving_average(x, window=100):
-    return pd.Series(x).rolling(window=window, min_periods=1).mean().values
 
 
 def make_value_map(state_values):
@@ -282,6 +282,17 @@ def make_altitude_map(altitude):
     return fig
 
 
+def make_divergence_map(divergence):
+    fig, ax = plt.subplots()
+
+    ax.plot(range(len(divergence)), divergence)
+    ax.set_title("Divergence map")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Divergence")
+
+    return fig
+
+
 if __name__ == "__main__":
     # Parse for configuration file
     parser = argparse.ArgumentParser(description=None)
@@ -296,7 +307,7 @@ if __name__ == "__main__":
 
     # Config
     config = Config(config_paths=[args["config"]])
-    wandb.init(config=config, project="vertical")
+    wandb.init(config=config, project="baselines")
 
     # Place cells
     centers, width = place_cell_centers(
@@ -343,6 +354,7 @@ if __name__ == "__main__":
     # Tracking vars
     steps_done = 0
     accumulated_rewards = []
+    accumulated_rewards_smooth = deque(maxlen=100)
 
     for i_episode in range(config["training"]["episodes"]):
         # Initialize the environment and state
@@ -366,6 +378,7 @@ if __name__ == "__main__":
         value_map = [[] for _ in range(n_actions)]
         policy_map = []
         altitude_map = []
+        divergence_map = []
 
         for t in count():
             # Render environment
@@ -400,6 +413,7 @@ if __name__ == "__main__":
                 value_map[i].append((divergence, decode(q_values_enc)[0, i].item()))
             policy_map.append((divergence, action.item()))
             altitude_map.append(env.state[0].item())
+            divergence_map.append(divergence)
 
             # Set to None if next state is terminal
             if not done:
@@ -434,16 +448,18 @@ if __name__ == "__main__":
             # Episode finished
             if done:
                 accumulated_rewards.append(accumulated_reward)
+                accumulated_rewards_smooth.append(accumulated_reward)
                 wandb.log(
                     {
                         "Reward": accumulated_reward,
-                        "RewardSmooth": moving_average(accumulated_rewards)[-1],
+                        "RewardSmooth": sum(accumulated_rewards_smooth) / len(accumulated_rewards_smooth),
                         "MaxDiv": max_div,
                         "Duration": t + 1,
                         "Epsilon": eps,
                         "ValueMap": make_value_map(value_map),
                         "PolicyMap": make_policy_map(policy_map),
                         "AltitudeMap": make_altitude_map(altitude_map),
+                        "DivergenceMap": make_divergence_map(divergence_map),
                     }
                 )
                 break

@@ -26,7 +26,7 @@ training:
     desc: "episodes: episodes, batchSize: learning batch size, gamma: reward discount, epsStart: epsilon-greedy start value, epsEnd: epsilon-greedy end value, epsDecay: epsilon-greedy decay time constant, targetUpdate: episodes between target network updates, learning rate: learning rate"
     value:
         batchSize: 128
-        episodes: 100
+        episodes: 500
         epsDecay: 10000
         epsEnd: 0.01
         epsStart: 0.9
