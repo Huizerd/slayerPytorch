@@ -132,9 +132,8 @@ def optimize_model(batch_size, gamma):
     # Based on older target net
     # Zero in case of terminal state
     next_values = torch.zeros(batch_size, device=DEVICE, dtype=torch.float)
-    next_values[non_terminal_mask] = (
-        target_net(non_terminal_next_states).max(1)[0].detach()
-    )
+    with torch.no_grad():
+        next_values[non_terminal_mask] = target_net(non_terminal_next_states).max(1)[0]
 
     # Compute expected Q-values
     expected_q_values = (next_values * gamma) + reward_batch
@@ -168,7 +167,7 @@ if __name__ == "__main__":
 
     # Config
     config = Config(config_paths=[args["config"]])
-    wandb.init(config=config, project="baselines")
+    wandb.init(config=config, project="baselines", tags=["DQN"])
 
     # Environment
     env = gym.make(
@@ -200,7 +199,6 @@ if __name__ == "__main__":
         DEVICE
     )
     target_net.load_state_dict(policy_net.state_dict())
-    target_net.eval()
 
     # Weights & Biases watching
     wandb.watch(policy_net, log="all")
@@ -213,8 +211,13 @@ if __name__ == "__main__":
 
     # Tracking vars
     steps_done = 0
-    accumulated_rewards = []
     accumulated_rewards_smooth = deque(maxlen=100)
+
+    # Input observations for value/policy maps, only for divergence control
+    if env.state_obs == "divergence":
+        obs_space = torch.arange(-10.0, 10.0, 0.05, device=DEVICE, dtype=torch.float)[
+            :, None
+        ]
 
     for i_episode in range(config["training"]["episodes"]):
         # Initialize the environment and state
@@ -223,8 +226,6 @@ if __name__ == "__main__":
 
         accumulated_reward = 0.0
         max_div = (-2 * env.state[1] / env.state[0]).item()
-        value_map = [[] for _ in range(n_actions)]
-        policy_map = []
         altitude_map = []
         divergence_map = []
         vertspeed_map = []
@@ -259,9 +260,6 @@ if __name__ == "__main__":
             divergence = (-2 * env.state[1] / env.state[0]).item()
             if abs(divergence) > abs(max_div):
                 max_div = divergence
-            for i in range(n_actions):
-                value_map[i].append((divergence, q_values[0, i].item()))
-            policy_map.append((divergence, action.item()))
             altitude_map.append(env.state[0].item())
             divergence_map.append(divergence)
             vertspeed_map.append(env.state[1].item())
@@ -286,7 +284,6 @@ if __name__ == "__main__":
 
             # Episode finished
             if done:
-                accumulated_rewards.append(accumulated_reward)
                 accumulated_rewards_smooth.append(accumulated_reward)
                 wandb.log(
                     {
@@ -296,21 +293,29 @@ if __name__ == "__main__":
                         "MaxDiv": max_div,
                         "Duration": t + 1,
                         "Epsilon": eps,
-                        "ValueMap": make_value_map(value_map),
-                        "PolicyMap": make_policy_map(policy_map),
                         "AltitudeMap": make_altitude_map(altitude_map),
                         "DivergenceMap": make_divergence_map(divergence_map),
                         "VertSpeedMap": make_vertspeed_map(vertspeed_map),
-                    }
+                    },
+                    step=i_episode,
                 )
+
+                if env.state_obs == "divergence":
+                    wandb.log(
+                        {
+                            "ValueMap": make_value_map(policy_net, actions, obs_space),
+                            "PolicyMap": make_policy_map(
+                                policy_net, actions, obs_space
+                            ),
+                        },
+                        step=i_episode,
+                    )
+
                 break
 
         # Update the target network, copying all weights etc.
         if i_episode % config["training"]["targetUpdate"] == 0:
-            # TODO: does load_state_dict() change train mode or other import stuff?
             target_net.load_state_dict(policy_net.state_dict())
 
-    # TODO: maybe create proper value map and policy map at end, and save model etc?
-    # Idea: we know the "right" policy for positive and negative divergence, so select values based on these?
     print("Complete")
     env.close()

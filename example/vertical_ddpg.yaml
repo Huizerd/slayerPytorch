@@ -1,32 +1,32 @@
 training:
-    desc: "episodes: episodes, batchSize: learning batch size, gamma: reward discount, epsStart: epsilon-greedy start value, epsEnd: epsilon-greedy end value, epsDecay: epsilon-greedy decay time constant, targetUpdate: episodes between target network updates, learning rate: learning rate"
     value:
-        batchSize: 64
+        batchSize: 100
         episodes: 500
+        evalInterval: 5
+        evalEps: 5
+        explEps: 50
         gamma: 0.99
         learningRate: 0.001
-        tau: 0.001
-        weightDecay: 0.01
+        sigma: 0.1
+        tau: 0.005
 environment:
-    desc: "name: environment name, render: whether to render environment"
     value:
-        actionBounds: [0.0, 40.0]
-        altBounds: [8.0, 12.0]
+        actionBounds: [0.0, 30.0]
+        altBounds: [0.1, 3.0]
         delay: 0
         goalObs: [0.0]
         gravity: 9.81
         initRand: [0.0, 0.5]
-        initState: [10.0, 0.0]
+        initState: [2.0, 0.0]
         interval: 10
         name: Mav-v0
         obsNoise: [0.0]
         render: False
-        rewardMods: [1.0, 15.0, 1.0, 1.0]
+        rewardMods: [1.0, 1.0, 1.0, 1.0]
         stateObs: divergence
         steps: 1000
         timedReward: False
 network:
-    desc: "hiddenSize: size of hidden layer, memorySize: size of memory for experience learning"
     value:
         hiddenSize: [400, 300]
         memorySize: 1000000

@@ -18,7 +18,7 @@ runs/
 exampleLoihi/02_NMNSIT/NMNSITsmall/
 
 #
-venv/
+venv2/
 example/*.png
 example/wandb/
 

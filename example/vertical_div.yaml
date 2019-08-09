@@ -1,11 +1,9 @@
 simulation:
-    desc: "Ts: sample time, tSample: length of spike trains, nSample: sample batch size"
     value:
         Ts: 1.0
         tSample: 500
         # nSample: 12  doesn't work!
 neuron:
-    desc: "type: neuron type, theta: threshold, tauSr: potential kernel time constant, tauRef: refractory kernel time constant, scaleRef: refractory kernel scaling, relative to theta, tauRho: spike fn derivative time constant, relative to theta, scaleRho: spike fn derivative scaling"
     value:
         # scaleRef: 2  # relative to theta, but doesn't work
         scaleRho: 1
@@ -15,15 +13,13 @@ neuron:
         theta: 10
         # type: SRMALPHA
 placeCells:
-    desc: "maxRate: max firing rate, N: # of place cells per state dimension, stateBounds: bounds per state dimension"
     value:
         N: [41]
-        maxRate: 400.0
+        maxRate: 800.0
         process: transform  # transform, clamp or nothing
         stateBounds: [[-10.0, 10.0]]
         steepness: 10.0
 training:
-    desc: "episodes: episodes, batchSize: learning batch size, gamma: reward discount, epsStart: epsilon-greedy start value, epsEnd: epsilon-greedy end value, epsDecay: epsilon-greedy decay time constant, targetUpdate: episodes between target network updates, learning rate: learning rate"
     value:
         batchSize: 128
         episodes: 500
@@ -34,11 +30,10 @@ training:
         learningRate: 0.01
         targetUpdate: 10
 environment:
-    desc: "name: environment name, render: whether to render environment"
     value:
         actionBounds: [0.0, 40.0]
         actionOffset: 0.0
-        actions: [0.0, 30.0]
+        actions: [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
         altBounds: [0.1, 3.0]
         delay: 0
         goalObs: [0.0]
@@ -49,12 +44,11 @@ environment:
         name: Mav-v0
         obsNoise: [0.0]
         render: False
-        rewardMods: [1.0, 1.0, 1.0, 1.0]
+        rewardMods: [1.0, 5.0, 1.0, 1.0]
         stateObs: divergence
         steps: 1000
         timedReward: False
 network:
-    desc: "hiddenSize: size of hidden layer, memorySize: size of memory for experience learning"
     value:
-        hiddenSize: 128
+        hiddenSize: 32
         memorySize: 10000

@@ -113,12 +113,16 @@ def place_cell_centers(state_bounds, n):
     width = torch.tensor(
         [c[1] - c[0] for c in centers], device=DEVICE, dtype=torch.float
     )
-    return torch.functional.cartesian_prod(*centers).view(-1, len(state_bounds)), width
+    # View: (batch, place cells, states)
+    return (
+        torch.functional.cartesian_prod(*centers).view(1, -1, len(state_bounds)),
+        width,
+    )
 
 
 def place_cells(state, centers, width, max_rate):
     distance = (centers - state) ** 2
-    firing_rate = max_rate * torch.exp(-(distance / (2.0 * width ** 2)).sum(1))
+    firing_rate = max_rate * torch.exp(-(distance / (2.0 * width ** 2)).sum(-1))
     return firing_rate
 
 
@@ -131,30 +135,31 @@ def encode(
 
     # Clamp only in case we don't do a transform
     if process == "transform":
-        low = centers[0]
-        high = centers[-1]
+        low = centers[0, 0]
+        high = centers[0, -1]
         mid = (high + low) / 2.0
         state_prep = sigmoid(
             state, y_min=low, y_step=(high - low), x_mid=mid, steepness=steepness / high
         )
     elif process == "clamp":
-        state_prep = torch.tensor(
-            [s.clamp(*sb) for s, sb in zip(state, state_bounds)],
-            device=DEVICE,
-            dtype=torch.float,
-        )
+        # Singleton dimension needed for clamp
+        low = centers[:, 0]
+        high = centers[:, 0]
+        state_prep = torch.max(torch.min(state, high), low)
     elif process == "nothing":
         state_prep = state.clone().detach()
     else:
         raise NotImplementedError("Provide a valid choice: transform, clamp, nothing.")
 
-    firing_rate = (
-        place_cells(state_prep, centers, width, max_rate).repeat(steps, 1).permute(1, 0)
+    # Repeat: (batch, place cells, time)
+    firing_rate = place_cells(state_prep, centers, width, max_rate)[..., None].repeat(
+        1, 1, steps
     )
     spikes = torch.rand(*firing_rate.size(), device=DEVICE) < firing_rate * (
         sample_time / 1000.0
     )
-    return spikes.view(1, -1, 1, 1, time).float(), firing_rate.view(1, -1, 1, 1, time)
+    # Shape: (batch, channels/place cells, height, width, time)
+    return spikes[:, :, None, None, :].float(), firing_rate[:, :, None, None, :]
 
 
 # Decode spikes into Q-values
@@ -218,9 +223,10 @@ def optimize_model(batch_size, gamma):
     # Based on older target net
     # Zero in case of terminal state
     next_values = torch.zeros(batch_size, device=DEVICE, dtype=torch.float)
-    next_values[non_terminal_mask] = (
-        decode(target_net(non_terminal_next_states)).max(1)[0].detach()
-    )
+    with torch.no_grad():
+        next_values[non_terminal_mask] = decode(
+            target_net(non_terminal_next_states)
+        ).max(1)[0]
 
     # Compute expected Q-values
     expected_q_values = (next_values * gamma) + reward_batch
@@ -243,29 +249,48 @@ def optimize_model(batch_size, gamma):
     optimizer.step()
 
 
-def make_value_map(state_values):
+def make_value_map(policy_net, actions, obs, encoded_obs=None, decode=None):
     fig, ax = plt.subplots()
 
-    for i, sv in enumerate(state_values):
-        sv.sort(key=itemgetter(0))
-        ax.plot([s[0] for s in sv], [s[1] for s in sv], label=f"Action {i}")
+    if encoded_obs is not None or decode is not None:
+        assert (
+            encoded_obs is not None and decode is not None
+        ), "Both encoded observations and a decoder are needed."
+        with torch.no_grad():
+            q_values = decode(policy_net(encoded_obs))
+    else:
+        with torch.no_grad():
+            q_values = policy_net(obs)
+
+    for i, act in enumerate(actions):
+        ax.plot(obs.squeeze().tolist(), q_values[:, i].tolist(), label=f"{act} N")
     ax.set_title("Value map")
     ax.set_xlabel("Divergence")
-    ax.set_ylabel("Value")
+    ax.set_ylabel("Q-value")
     ax.legend()
     ax.grid()
 
     return fig
 
 
-def make_policy_map(state_actions):
-    state_actions.sort(key=itemgetter(0))
+def make_policy_map(policy_net, actions, obs, encoded_obs=None, decode=None):
     fig, ax = plt.subplots()
 
-    ax.plot([s[0] for s in state_actions], [s[1] for s in state_actions])
+    if encoded_obs is not None or decode is not None:
+        assert (
+            encoded_obs is not None and decode is not None
+        ), "Both encoded observations and a decoder are needed."
+        with torch.no_grad():
+            policy = decode(policy_net(encoded_obs)).argmax(-1)
+    else:
+        with torch.no_grad():
+            policy = policy_net(obs).argmax(-1)
+
+    ax.plot(obs.squeeze().tolist(), [actions[i] for i in policy.tolist()])
     ax.set_title("Policy map")
     ax.set_xlabel("Divergence")
     ax.set_ylabel("Action")
+    ax.grid()
 
     return fig
 
@@ -277,6 +302,7 @@ def make_altitude_map(altitude):
     ax.set_title("Altitude map")
     ax.set_xlabel("Step")
     ax.set_ylabel("Altitude")
+    ax.grid()
 
     return fig
 
@@ -288,6 +314,7 @@ def make_divergence_map(divergence):
     ax.set_title("Divergence map")
     ax.set_xlabel("Step")
     ax.set_ylabel("Divergence")
+    ax.grid()
 
     return fig
 
@@ -299,6 +326,7 @@ def make_vertspeed_map(vertspeed):
     ax.set_title("Vertical speed map")
     ax.set_xlabel("Step")
     ax.set_ylabel("Vertical speed")
+    ax.grid()
 
     return fig
 
@@ -317,13 +345,13 @@ if __name__ == "__main__":
 
     # Config
     config = Config(config_paths=[args["config"]])
-    wandb.init(config=config, project="baselines")
+    wandb.init(config=config, project="baselines", tags=["DQSNN"])
 
     # Place cells
     centers, width = place_cell_centers(
         config["placeCells"]["stateBounds"], config["placeCells"]["N"]
     )
-    n_place_cells = centers.size(0)
+    n_place_cells = centers.size(1)
 
     # Environment
     env = gym.make(
@@ -350,7 +378,6 @@ if __name__ == "__main__":
     policy_net = Network(config, n_place_cells, n_actions).to(DEVICE)
     target_net = Network(config, n_place_cells, n_actions).to(DEVICE)
     target_net.load_state_dict(policy_net.state_dict())
-    target_net.eval()
 
     # Weights & Biases watching
     wandb.watch(policy_net, log="all")
@@ -363,12 +390,30 @@ if __name__ == "__main__":
 
     # Tracking vars
     steps_done = 0
-    accumulated_rewards = []
     accumulated_rewards_smooth = deque(maxlen=100)
+
+    # Input observations for value/policy maps, only for divergence control
+    if env.state_obs == "divergence":
+        # Reshape for encoding: (batch, place cells, states)
+        # Output: (batch, place cells/channels, height, width, time)
+        obs_space = torch.arange(
+            -10.0, 10.0, 0.05, device=DEVICE, dtype=torch.float
+        ).view(-1, 1, 1)
+        obs_space_enc, _ = encode(
+            obs_space,
+            centers,
+            width,
+            config["placeCells"]["stateBounds"],
+            config["placeCells"]["maxRate"],
+            config["placeCells"]["steepness"],
+            config["simulation"]["tSample"],
+            config["simulation"]["Ts"],
+            config["placeCells"]["process"],
+        )
 
     for i_episode in range(config["training"]["episodes"]):
         # Initialize the environment and state
-        state = env.reset().float().to(DEVICE)
+        state = env.reset().float().to(DEVICE).view(1, -1)
 
         # Encode state
         state_enc, _ = encode(
@@ -385,8 +430,6 @@ if __name__ == "__main__":
 
         accumulated_reward = 0.0
         max_div = (-2 * env.state[1] / env.state[0]).item()
-        value_map = [[] for _ in range(n_actions)]
-        policy_map = []
         altitude_map = []
         divergence_map = []
         vertspeed_map = []
@@ -421,16 +464,13 @@ if __name__ == "__main__":
             divergence = (-2 * env.state[1] / env.state[0]).item()
             if abs(divergence) > abs(max_div):
                 max_div = divergence
-            for i in range(n_actions):
-                value_map[i].append((divergence, decode(q_values_enc)[0, i].item()))
-            policy_map.append((divergence, action.item()))
             altitude_map.append(env.state[0].item())
             divergence_map.append(divergence)
             vertspeed_map.append(env.state[1].item())
 
             # Set to None if next state is terminal
             if not done:
-                next_state = next_state.float().to(DEVICE)
+                next_state = next_state.float().to(DEVICE).view(1, -1)
                 next_state_enc, _ = encode(
                     next_state,
                     centers,
@@ -460,7 +500,6 @@ if __name__ == "__main__":
 
             # Episode finished
             if done:
-                accumulated_rewards.append(accumulated_reward)
                 accumulated_rewards_smooth.append(accumulated_reward)
                 wandb.log(
                     {
@@ -470,20 +509,42 @@ if __name__ == "__main__":
                         "MaxDiv": max_div,
                         "Duration": t + 1,
                         "Epsilon": eps,
-                        "ValueMap": make_value_map(value_map),
-                        "PolicyMap": make_policy_map(policy_map),
                         "AltitudeMap": make_altitude_map(altitude_map),
                         "DivergenceMap": make_divergence_map(divergence_map),
                         "VertSpeedMap": make_vertspeed_map(vertspeed_map),
-                    }
+                    },
+                    step=i_episode,
                 )
+
+                if (
+                    env.state_obs == "divergence"
+                    and i_episode % config["environment"]["interval"] == 0
+                ):
+                    wandb.log(
+                        {
+                            "ValueMap": make_value_map(
+                                policy_net,
+                                actions,
+                                obs_space,
+                                encoded_obs=obs_space_enc,
+                                decode=decode,
+                            ),
+                            "PolicyMap": make_policy_map(
+                                policy_net,
+                                actions,
+                                obs_space,
+                                encoded_obs=obs_space_enc,
+                                decode=decode,
+                            ),
+                        },
+                        step=i_episode,
+                    )
+
                 break
 
         # Update the target network, copying all weights etc.
         if i_episode % config["training"]["targetUpdate"] == 0:
             target_net.load_state_dict(policy_net.state_dict())
 
-    # TODO: maybe create proper value map and policy map at end, and save model etc?
-    # Idea: we know the "right" policy for positive and negative divergence, so select values based on these?
     print("Complete")
     env.close()
