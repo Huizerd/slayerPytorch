@@ -13,6 +13,7 @@ import math
 import random
 import argparse
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from collections import deque, namedtuple
 from operator import itemgetter
 from itertools import count
@@ -263,7 +264,9 @@ def make_value_map(policy_net, actions, obs, encoded_obs=None, decode=None):
             q_values = policy_net(obs)
 
     for i, act in enumerate(actions):
-        ax.plot(obs.squeeze().tolist(), q_values[:, i].tolist(), label=f"{act} N")
+        ax.plot(
+            obs.squeeze().cpu().numpy(), q_values[:, i].cpu().numpy(), label=f"{act} N"
+        )
     ax.set_title("Value map")
     ax.set_xlabel("Divergence")
     ax.set_ylabel("Q-value")
@@ -286,10 +289,10 @@ def make_policy_map(policy_net, actions, obs, encoded_obs=None, decode=None):
         with torch.no_grad():
             policy = policy_net(obs).argmax(-1)
 
-    ax.plot(obs.squeeze().tolist(), [actions[i] for i in policy.tolist()])
+    ax.plot(obs.squeeze().cpu().numpy(), [actions[i] for i in policy.tolist()])
     ax.set_title("Policy map")
     ax.set_xlabel("Divergence")
-    ax.set_ylabel("Action")
+    ax.set_ylabel("Thrust")
     ax.grid()
 
     return fig
@@ -319,15 +322,22 @@ def make_divergence_map(divergence):
     return fig
 
 
-def make_vertspeed_map(vertspeed):
+def make_action_map(actions):
     fig, ax = plt.subplots()
 
-    ax.plot(range(len(vertspeed)), vertspeed)
-    ax.set_title("Vertical speed map")
+    ax.plot(range(len(actions)), actions)
+    ax.set_title("Action map")
     ax.set_xlabel("Step")
-    ax.set_ylabel("Vertical speed")
+    ax.set_ylabel("Thrust")
     ax.grid()
 
+    return fig
+
+
+def make_action_map_plotly(actions):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=list(range(len(actions))), y=actions))
+    fig.update_layout(title="Action map", xaxis_title="Step", yaxis_title="Thrust")
     return fig
 
 
@@ -360,6 +370,8 @@ if __name__ == "__main__":
         init_rand=config["environment"]["initRand"],
         init_state=config["environment"]["initState"],
         delay=config["environment"]["delay"],
+        punish_crash=config["environment"]["punishCrash"],
+        reward_finish=config["environment"]["rewardFinish"],
         reward_mods=config["environment"]["rewardMods"],
         state_bounds=[config["environment"]["altBounds"], None],
         total_steps=config["environment"]["steps"],
@@ -397,7 +409,7 @@ if __name__ == "__main__":
         # Reshape for encoding: (batch, place cells, states)
         # Output: (batch, place cells/channels, height, width, time)
         obs_space = torch.arange(
-            -10.0, 10.0, 0.05, device=DEVICE, dtype=torch.float
+            -10.0, 10.0, 0.1, device=DEVICE, dtype=torch.float
         ).view(-1, 1, 1)
         obs_space_enc, _ = encode(
             obs_space,
@@ -432,7 +444,7 @@ if __name__ == "__main__":
         max_div = (-2 * env.state[1] / env.state[0]).item()
         altitude_map = []
         divergence_map = []
-        vertspeed_map = []
+        action_map = []
 
         for t in count():
             # Render environment
@@ -447,7 +459,7 @@ if __name__ == "__main__":
             with torch.no_grad():
                 q_values_enc = policy_net(state_enc)
 
-            # Select and perform an action
+            # Select action
             action, eps = select_action(
                 q_values_enc,
                 steps_done,
@@ -455,9 +467,6 @@ if __name__ == "__main__":
                 config["training"]["epsEnd"],
                 config["training"]["epsDecay"],
             )
-            next_state, reward, done, _ = env.step(actions[action.item()])
-            accumulated_reward += reward
-            reward = torch.tensor([reward], device=DEVICE, dtype=torch.float)
 
             # Log maps
             # All state observations without noise (directly from env)
@@ -466,7 +475,12 @@ if __name__ == "__main__":
                 max_div = divergence
             altitude_map.append(env.state[0].item())
             divergence_map.append(divergence)
-            vertspeed_map.append(env.state[1].item())
+            action_map.append(actions[action.item()])
+
+            # Take action
+            next_state, reward, done, _ = env.step(actions[action.item()])
+            accumulated_reward += reward
+            reward = torch.tensor([reward], device=DEVICE, dtype=torch.float)
 
             # Set to None if next state is terminal
             if not done:
@@ -511,7 +525,7 @@ if __name__ == "__main__":
                         "Epsilon": eps,
                         "AltitudeMap": make_altitude_map(altitude_map),
                         "DivergenceMap": make_divergence_map(divergence_map),
-                        "VertSpeedMap": make_vertspeed_map(vertspeed_map),
+                        "ActionMap": make_action_map(action_map),
                     },
                     step=i_episode,
                 )
@@ -539,6 +553,7 @@ if __name__ == "__main__":
                         },
                         step=i_episode,
                     )
+                plt.close("all")
 
                 break
 

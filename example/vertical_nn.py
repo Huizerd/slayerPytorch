@@ -4,6 +4,7 @@ import gym_mav
 import math
 import random
 import argparse
+import matplotlib.pyplot as plt
 from collections import deque, namedtuple
 from itertools import count
 
@@ -23,7 +24,7 @@ from vertical import (
     make_policy_map,
     make_value_map,
     make_divergence_map,
-    make_vertspeed_map,
+    make_action_map,
 )
 
 # Determinism
@@ -176,6 +177,8 @@ if __name__ == "__main__":
         init_rand=config["environment"]["initRand"],
         init_state=config["environment"]["initState"],
         delay=config["environment"]["delay"],
+        punish_crash=config["environment"]["punishCrash"],
+        reward_finish=config["environment"]["rewardFinish"],
         reward_mods=config["environment"]["rewardMods"],
         state_bounds=[config["environment"]["altBounds"], None],
         total_steps=config["environment"]["steps"],
@@ -215,7 +218,7 @@ if __name__ == "__main__":
 
     # Input observations for value/policy maps, only for divergence control
     if env.state_obs == "divergence":
-        obs_space = torch.arange(-10.0, 10.0, 0.05, device=DEVICE, dtype=torch.float)[
+        obs_space = torch.arange(-10.0, 10.0, 0.1, device=DEVICE, dtype=torch.float)[
             :, None
         ]
 
@@ -228,7 +231,7 @@ if __name__ == "__main__":
         max_div = (-2 * env.state[1] / env.state[0]).item()
         altitude_map = []
         divergence_map = []
-        vertspeed_map = []
+        action_map = []
 
         for t in count():
             # Render environment
@@ -243,7 +246,7 @@ if __name__ == "__main__":
             with torch.no_grad():
                 q_values = policy_net(state)
 
-            # Select and perform an action
+            # Select action
             action, eps = select_action(
                 q_values,
                 steps_done,
@@ -251,9 +254,6 @@ if __name__ == "__main__":
                 config["training"]["epsEnd"],
                 config["training"]["epsDecay"],
             )
-            next_state, reward, done, _ = env.step(actions[action.item()])
-            accumulated_reward += reward
-            reward = torch.tensor([reward], device=DEVICE, dtype=torch.float)
 
             # Log maps
             # All state observations without noise (directly from env)
@@ -262,7 +262,12 @@ if __name__ == "__main__":
                 max_div = divergence
             altitude_map.append(env.state[0].item())
             divergence_map.append(divergence)
-            vertspeed_map.append(env.state[1].item())
+            action_map.append(actions[action.item()])
+
+            # Take action
+            next_state, reward, done, _ = env.step(actions[action.item()])
+            accumulated_reward += reward
+            reward = torch.tensor([reward], device=DEVICE, dtype=torch.float)
 
             # Set to None if next state is terminal
             if not done:
@@ -295,12 +300,15 @@ if __name__ == "__main__":
                         "Epsilon": eps,
                         "AltitudeMap": make_altitude_map(altitude_map),
                         "DivergenceMap": make_divergence_map(divergence_map),
-                        "VertSpeedMap": make_vertspeed_map(vertspeed_map),
+                        "ActionMap": make_action_map(action_map),
                     },
                     step=i_episode,
                 )
 
-                if env.state_obs == "divergence":
+                if (
+                    env.state_obs == "divergence"
+                    and i_episode % config["environment"]["interval"] == 0
+                ):
                     wandb.log(
                         {
                             "ValueMap": make_value_map(policy_net, actions, obs_space),
@@ -310,6 +318,7 @@ if __name__ == "__main__":
                         },
                         step=i_episode,
                     )
+                plt.close("all")
 
                 break
 
