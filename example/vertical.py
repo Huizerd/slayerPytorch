@@ -15,7 +15,6 @@ import argparse
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from collections import deque, namedtuple
-from operator import itemgetter
 from itertools import count
 
 # Torch
@@ -66,15 +65,14 @@ class Network(nn.Module):
         self.hidden = config["network"]["hiddenSize"]
 
         # Initialize SLAYER
-        slayer = snn.layer(config["neuron"], config["simulation"])
-        self.slayer = slayer
+        self.slayer = snn.layer(config["neuron"], config["simulation"])
 
         # Define network layers
         if self.hidden > 0:
-            self.fc1 = slayer.dense(inputs, self.hidden)
-            self.fc2 = slayer.dense(self.hidden, outputs)
+            self.fc1 = self.slayer.dense(inputs, self.hidden)
+            self.fc2 = self.slayer.dense(self.hidden, outputs)
         else:
-            self.fc1 = slayer.dense(inputs, outputs)
+            self.fc1 = self.slayer.dense(inputs, outputs)
 
     def forward(self, spike_input):
         if self.hidden > 0:
@@ -129,7 +127,7 @@ def place_cells(state, centers, width, max_rate):
 
 # Encoding state as spike trains
 def encode(
-    state, centers, width, state_bounds, max_rate, steepness, time, sample_time, process
+    state, centers, width, max_rate, steepness, time, sample_time, process
 ):
     # Note that quite long trains are needed to get something remotely deterministic
     steps = int(time / sample_time)
@@ -409,13 +407,12 @@ if __name__ == "__main__":
         # Reshape for encoding: (batch, place cells, states)
         # Output: (batch, place cells/channels, height, width, time)
         obs_space = torch.arange(
-            -10.0, 10.0, 0.1, device=DEVICE, dtype=torch.float
+            -10.0, 10.0, 0.5, device=DEVICE, dtype=torch.float
         ).view(-1, 1, 1)
         obs_space_enc, _ = encode(
             obs_space,
             centers,
             width,
-            config["placeCells"]["stateBounds"],
             config["placeCells"]["maxRate"],
             config["placeCells"]["steepness"],
             config["simulation"]["tSample"],
@@ -432,7 +429,6 @@ if __name__ == "__main__":
             state,
             centers,
             width,
-            config["placeCells"]["stateBounds"],
             config["placeCells"]["maxRate"],
             config["placeCells"]["steepness"],
             config["simulation"]["tSample"],
@@ -489,7 +485,6 @@ if __name__ == "__main__":
                     next_state,
                     centers,
                     width,
-                    config["placeCells"]["stateBounds"],
                     config["placeCells"]["maxRate"],
                     config["placeCells"]["steepness"],
                     config["simulation"]["tSample"],

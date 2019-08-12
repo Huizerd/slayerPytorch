@@ -218,7 +218,7 @@ if __name__ == "__main__":
 
     # Input observations for value/policy maps, only for divergence control
     if env.state_obs == "divergence":
-        obs_space = torch.arange(-10.0, 10.0, 0.1, device=DEVICE, dtype=torch.float)[
+        obs_space = torch.arange(-10.0, 10.0, 0.5, device=DEVICE, dtype=torch.float)[
             :, None
         ]
 

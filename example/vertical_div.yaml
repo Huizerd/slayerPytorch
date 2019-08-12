@@ -15,7 +15,7 @@ neuron:
 placeCells:
     value:
         N: [41]
-        maxRate: 800.0
+        maxRate: 400.0
         process: transform  # transform, clamp or nothing
         stateBounds: [[-10.0, 10.0]]
         steepness: 10.0
