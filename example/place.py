@@ -7,7 +7,7 @@ torch.manual_seed(0)
 
 low = -10.0
 high = 10.0
-states = torch.arange(-10.0, 10.0, 0.05, device=DEVICE).view(-1, 1, 1)
+states = torch.arange(-10.0, 10.0 + 0.01, 0.05, device=DEVICE).view(-1, 1, 1)
 centers, width = place_cell_centers([[low, high]], [11])
 ts = 1.0  # ms
 time = 500  # ms

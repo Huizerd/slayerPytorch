@@ -126,9 +126,7 @@ def place_cells(state, centers, width, max_rate):
 
 
 # Encoding state as spike trains
-def encode(
-    state, centers, width, max_rate, steepness, time, sample_time, process
-):
+def encode(state, centers, width, max_rate, steepness, time, sample_time, process):
     # Note that quite long trains are needed to get something remotely deterministic
     steps = int(time / sample_time)
 
@@ -248,22 +246,27 @@ def optimize_model(batch_size, gamma):
     optimizer.step()
 
 
-def make_value_map(policy_net, actions, obs, encoded_obs=None, decode=None):
+def make_value_map(
+    policy_net, actions, action_offset, obs, encoded_obs=None, decode=None
+):
     fig, ax = plt.subplots()
 
-    if encoded_obs is not None or decode is not None:
-        assert (
-            encoded_obs is not None and decode is not None
-        ), "Both encoded observations and a decoder are needed."
+    if encoded_obs is not None and decode is not None:
         with torch.no_grad():
             q_values = decode(policy_net(encoded_obs))
+    elif encoded_obs is not None:
+        # Take action based on transformed states, but use real states for plotting
+        with torch.no_grad():
+            q_values = policy_net(encoded_obs)
     else:
         with torch.no_grad():
             q_values = policy_net(obs)
 
     for i, act in enumerate(actions):
         ax.plot(
-            obs.squeeze().cpu().numpy(), q_values[:, i].cpu().numpy(), label=f"{act} N"
+            obs.squeeze().cpu().numpy(),
+            q_values[:, i].cpu().numpy(),
+            label=f"{act + action_offset} N",
         )
     ax.set_title("Value map")
     ax.set_xlabel("Divergence")
@@ -274,20 +277,26 @@ def make_value_map(policy_net, actions, obs, encoded_obs=None, decode=None):
     return fig
 
 
-def make_policy_map(policy_net, actions, obs, encoded_obs=None, decode=None):
+def make_policy_map(
+    policy_net, actions, action_offset, obs, encoded_obs=None, decode=None
+):
     fig, ax = plt.subplots()
 
-    if encoded_obs is not None or decode is not None:
-        assert (
-            encoded_obs is not None and decode is not None
-        ), "Both encoded observations and a decoder are needed."
+    if encoded_obs is not None and decode is not None:
         with torch.no_grad():
             policy = decode(policy_net(encoded_obs)).argmax(-1)
+    elif encoded_obs is not None:
+        # Take action based on transformed states, but use real states for plotting
+        with torch.no_grad():
+            policy = policy_net(encoded_obs).argmax(-1)
     else:
         with torch.no_grad():
             policy = policy_net(obs).argmax(-1)
 
-    ax.plot(obs.squeeze().cpu().numpy(), [actions[i] for i in policy.tolist()])
+    ax.plot(
+        obs.squeeze().cpu().numpy(),
+        [actions[i] + action_offset for i in policy.tolist()],
+    )
     ax.set_title("Policy map")
     ax.set_xlabel("Divergence")
     ax.set_ylabel("Thrust")
@@ -382,6 +391,7 @@ if __name__ == "__main__":
     )
     env.seed(0)
     actions = config["environment"]["actions"]
+    action_offset = config["environment"]["actionOffset"]
     n_actions = len(actions)
 
     # SNN
@@ -407,7 +417,11 @@ if __name__ == "__main__":
         # Reshape for encoding: (batch, place cells, states)
         # Output: (batch, place cells/channels, height, width, time)
         obs_space = torch.arange(
-            -10.0, 10.0, 0.5, device=DEVICE, dtype=torch.float
+            config["placeCells"]["stateBounds"][0][0],
+            config["placeCells"]["stateBounds"][0][1] + 0.01,
+            0.5,
+            device=DEVICE,
+            dtype=torch.float,
         ).view(-1, 1, 1)
         obs_space_enc, _ = encode(
             obs_space,
@@ -471,7 +485,7 @@ if __name__ == "__main__":
                 max_div = divergence
             altitude_map.append(env.state[0].item())
             divergence_map.append(divergence)
-            action_map.append(actions[action.item()])
+            action_map.append(actions[action.item()] + action_offset)
 
             # Take action
             next_state, reward, done, _ = env.step(actions[action.item()])
@@ -534,6 +548,7 @@ if __name__ == "__main__":
                             "ValueMap": make_value_map(
                                 policy_net,
                                 actions,
+                                action_offset,
                                 obs_space,
                                 encoded_obs=obs_space_enc,
                                 decode=decode,
@@ -541,6 +556,7 @@ if __name__ == "__main__":
                             "PolicyMap": make_policy_map(
                                 policy_net,
                                 actions,
+                                action_offset,
                                 obs_space,
                                 encoded_obs=obs_space_enc,
                                 decode=decode,

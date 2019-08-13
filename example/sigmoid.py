@@ -5,7 +5,7 @@ from vertical import sigmoid
 if __name__ == "__main__":
     low = -2.0
     high = 2.0
-    x = torch.arange(low, high, 0.05)
+    x = torch.arange(low, high + 0.01, 0.05)
     plt.plot(
         x.tolist(),
         sigmoid(

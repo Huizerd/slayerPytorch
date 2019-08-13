@@ -25,6 +25,7 @@ from vertical import (
     make_value_map,
     make_divergence_map,
     make_action_map,
+    sigmoid,
 )
 
 # Determinism
@@ -83,6 +84,33 @@ class Network(nn.Module):
 
         # Linear activation (as in DQN) since we're approximating real-valued Q-values
         return x
+
+
+# Encoding state as spike trains
+def encode(state, bounds, steepness, process):
+    # Clamp only in case we don't do a transform
+    if process == "transform":
+        low = torch.tensor([b[0] for b in bounds], device=DEVICE, dtype=torch.float)
+        high = torch.tensor([b[1] for b in bounds], device=DEVICE, dtype=torch.float)
+        mid = (high + low) / 2.0
+        state_prep = sigmoid(
+            state, y_min=low, y_step=(high - low), x_mid=mid, steepness=steepness / high
+        )
+        return state_prep
+    elif process == "clamp":
+        # Singleton dimension needed for clamp
+        low = torch.tensor([b[0] for b in bounds], device=DEVICE, dtype=torch.float)[
+            None
+        ]
+        high = torch.tensor([b[1] for b in bounds], device=DEVICE, dtype=torch.float)[
+            None
+        ]
+        state_prep = torch.max(torch.min(state, high), low)
+        return state_prep
+    elif process == "nothing":
+        return state
+    else:
+        raise NotImplementedError("Provide a valid choice: transform, clamp, nothing.")
 
 
 def select_action(q_values, steps_done, eps_start, eps_end, eps_decay):
@@ -191,6 +219,7 @@ if __name__ == "__main__":
     )
     env.seed(0)
     actions = config["environment"]["actions"]
+    action_offset = config["environment"]["actionOffset"]
     n_actions = len(actions)
     n_states = 2 if env.state_obs == "altitude" else 1
 
@@ -218,16 +247,33 @@ if __name__ == "__main__":
 
     # Input observations for value/policy maps, only for divergence control
     if env.state_obs == "divergence":
-        obs_space = torch.arange(-10.0, 10.0, 0.5, device=DEVICE, dtype=torch.float)[
-            :, None
-        ]
+        obs_space = torch.arange(
+            config["encoding"]["stateBounds"][0][0],
+            config["encoding"]["stateBounds"][0][1] + 0.01,
+            0.5,
+            device=DEVICE,
+            dtype=torch.float,
+        )[:, None]
+        obs_space_t = encode(
+            obs_space,
+            config["encoding"]["stateBounds"],
+            config["encoding"]["steepness"],
+            config["encoding"]["process"],
+        )
 
     for i_episode in range(config["training"]["episodes"]):
         # Initialize the environment and state
         # BCHW is torch order, but we only do BC
         state = env.reset().float().to(DEVICE).view(1, -1)
+        state = encode(
+            state,
+            config["encoding"]["stateBounds"],
+            config["encoding"]["steepness"],
+            config["encoding"]["process"],
+        )
 
         accumulated_reward = 0.0
+        # True divergence, not transformed
         max_div = (-2 * env.state[1] / env.state[0]).item()
         altitude_map = []
         divergence_map = []
@@ -262,7 +308,7 @@ if __name__ == "__main__":
                 max_div = divergence
             altitude_map.append(env.state[0].item())
             divergence_map.append(divergence)
-            action_map.append(actions[action.item()])
+            action_map.append(actions[action.item()] + action_offset)
 
             # Take action
             next_state, reward, done, _ = env.step(actions[action.item()])
@@ -272,6 +318,12 @@ if __name__ == "__main__":
             # Set to None if next state is terminal
             if not done:
                 next_state = next_state.float().to(DEVICE).view(1, -1)
+                next_state = encode(
+                    next_state,
+                    config["encoding"]["stateBounds"],
+                    config["encoding"]["steepness"],
+                    config["encoding"]["process"],
+                )
             else:
                 next_state = None
 
@@ -311,9 +363,19 @@ if __name__ == "__main__":
                 ):
                     wandb.log(
                         {
-                            "ValueMap": make_value_map(policy_net, actions, obs_space),
+                            "ValueMap": make_value_map(
+                                policy_net,
+                                actions,
+                                action_offset,
+                                obs_space,
+                                encoded_obs=obs_space_t,
+                            ),
                             "PolicyMap": make_policy_map(
-                                policy_net, actions, obs_space
+                                policy_net,
+                                actions,
+                                action_offset,
+                                obs_space,
+                                encoded_obs=obs_space_t,
                             ),
                         },
                         step=i_episode,

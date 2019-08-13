@@ -19,6 +19,9 @@ import torch.nn.functional as F
 import wandb
 from wandb.wandb_config import Config
 
+# Local
+from vertical import make_altitude_map, make_divergence_map, make_action_map
+
 # Determinism
 torch.manual_seed(0)
 random.seed(0)
@@ -57,18 +60,18 @@ class NormalActionNoise:
         return self.sigma * torch.randn(self.actions, device=DEVICE, dtype=torch.float)
 
 
-def make_value_map(critic, acts, obs, act_offset=0.0, encoded_obs=None, decode=None):
+def make_value_map(critic, acts, obs, act_offset, encoded_obs=None, decode=None):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
-    obs, acts = torch.meshgrid(obs, acts)
+    obs, acts = torch.meshgrid(obs.squeeze(), acts.squeeze())
 
-    if encoded_obs is not None or decode is not None:
-        assert (
-            encoded_obs is not None and decode is not None
-        ), "Both encoded observations and a decoder are needed."
+    if encoded_obs is not None and decode is not None:
         with torch.no_grad():
             # TODO: fix this: do we need actor here? Do we need deterministic mapping both ways for spikes <-> actions?
             q_values = decode(critic(encoded_obs))
+    elif encoded_obs is not None:
+        with torch.no_grad():
+            q_values = critic(encoded_obs)
     else:
         with torch.no_grad():
             q_values = critic(
@@ -87,19 +90,17 @@ def make_value_map(critic, acts, obs, act_offset=0.0, encoded_obs=None, decode=N
     return fig
 
 
-def make_value_map_plotly(
-    critic, acts, obs, act_offset=0.0, encoded_obs=None, decode=None
-):
+def make_value_map_plotly(critic, acts, obs, act_offset, encoded_obs=None, decode=None):
     fig = go.Figure()
-    obs, acts = torch.meshgrid(obs, acts)
+    obs, acts = torch.meshgrid(obs.squeeze(), acts.squeeze())
 
     if encoded_obs is not None or decode is not None:
-        assert (
-            encoded_obs is not None and decode is not None
-        ), "Both encoded observations and a decoder are needed."
         with torch.no_grad():
             # TODO: fix this: do we need actor here? Do we need deterministic mapping both ways for spikes <-> actions?
             q_values = decode(critic(encoded_obs))
+    elif encoded_obs is not None:
+        with torch.no_grad():
+            q_values = critic(encoded_obs)
     else:
         with torch.no_grad():
             q_values = critic(
@@ -123,61 +124,22 @@ def make_value_map_plotly(
     return fig
 
 
-def make_policy_map(actor, obs, act_offset=0.0, encoded_obs=None, decode=None):
+def make_policy_map(actor, obs, act_offset, encoded_obs=None, decode=None):
     fig, ax = plt.subplots()
 
-    if encoded_obs is not None or decode is not None:
-        assert (
-            encoded_obs is not None and decode is not None
-        ), "Both encoded observations and a decoder are needed."
+    if encoded_obs is not None and decode is not None:
         with torch.no_grad():
             policy = decode(actor(encoded_obs))
+    elif encoded_obs is not None:
+        with torch.no_grad():
+            policy = actor(encoded_obs)
     else:
         with torch.no_grad():
-            policy = actor(obs[:, None])
+            policy = actor(obs)
 
-    ax.plot(obs.cpu().numpy(), policy.squeeze().cpu().numpy() + act_offset)
+    ax.plot(obs.squeeze().cpu().numpy(), policy.squeeze().cpu().numpy() + act_offset)
     ax.set_title("Policy map")
     ax.set_xlabel("Divergence")
-    ax.set_ylabel("Thrust")
-    ax.grid()
-
-    return fig
-
-
-def make_altitude_map(altitudes):
-    fig, ax = plt.subplots()
-
-    for altitude in altitudes:
-        ax.plot(range(len(altitude)), altitude)
-    ax.set_title("Altitude map")
-    ax.set_xlabel("Step")
-    ax.set_ylabel("Altitude")
-    ax.grid()
-
-    return fig
-
-
-def make_divergence_map(divergences):
-    fig, ax = plt.subplots()
-
-    for divergence in divergences:
-        ax.plot(range(len(divergence)), divergence)
-    ax.set_title("Divergence map")
-    ax.set_xlabel("Step")
-    ax.set_ylabel("Divergence")
-    ax.grid()
-
-    return fig
-
-
-def make_action_map(actions):
-    fig, ax = plt.subplots()
-
-    for action in actions:
-        ax.plot(range(len(action)), action)
-    ax.set_title("Action map")
-    ax.set_xlabel("Step")
     ax.set_ylabel("Thrust")
     ax.grid()
 
@@ -473,15 +435,20 @@ if __name__ == "__main__":
     # Input observations for value/policy maps, only for divergence control
     if env.state_obs == "divergence":
         obs_space = torch.arange(
-            -10.0, 10.0, 0.5, device=DEVICE, dtype=torch.float
-        )  # [:, None]
-        act_space = torch.arange(
-            *config["environment"]["actionBounds"],
+            config["encoding"]["stateBounds"][0][0],
+            config["encoding"]["stateBounds"][0][1] + 0.01,
             0.5,
             device=DEVICE,
-            dtype=torch.float
-        )  # [:, None]
-    policy.eval(env, 0, obs_space, act_space)
+            dtype=torch.float,
+        )[:, None]
+        act_space = torch.arange(
+            config["environment"]["actionBounds"][0],
+            config["environment"]["actionBounds"][1] + 0.01,
+            0.5,
+            device=DEVICE,
+            dtype=torch.float,
+        )[:, None]
+        policy.eval(env, 0, obs_space, act_space)
 
     for i_episode in range(config["training"]["episodes"]):
         # Initialize the environment and state
@@ -528,7 +495,7 @@ if __name__ == "__main__":
                     policy.train(t)
 
                     # Only for episode > 0 since we did initial eval above
-                    if (
+                    if env.state_obs == "divergence" and (
                         i_episode % config["training"]["evalInterval"] == 0
                         or i_episode == config["training"]["episodes"] - 1
                     ):
